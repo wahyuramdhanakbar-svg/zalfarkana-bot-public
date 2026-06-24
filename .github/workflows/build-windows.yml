@@ -1,0 +1,46 @@
+name: 🏗️ Build Windows GUI (.exe)
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '*.py'
+      - 'vps_config.example.json'
+      - '.github/workflows/*.yml'
+  workflow_dispatch: # Bisa jalanin manual dari Actions tab
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - name: 📥 Checkout repo
+        uses: actions/checkout@v4
+
+      - name: 🐍 Setup Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: 📦 Install PyInstaller
+        run: pip install pyinstaller
+
+      - name: 🏗️ Build GUI Edition (zalfarkana.exe)
+        run: |
+          pyinstaller --onefile --windowed --name "zalfarkana-gui" --icon NONE zalfarkana.py
+        shell: pwsh
+
+      - name: 🏗️ Build VPS Edition (zalfarkana_vps.exe)
+        run: |
+          pyinstaller --onefile --console --name "zalfarkana-vps" zalfarkana_vps.py
+        shell: pwsh
+
+      - name: 📤 Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: zalfarkana-windows-build
+          path: |
+            dist/zalfarkana-gui.exe
+            dist/zalfarkana-vps.exe
+          compression-level: 9
+          retention-days: 90
