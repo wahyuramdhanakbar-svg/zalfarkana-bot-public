@@ -1,0 +1,30 @@
+# --- Sensitive Config ---
+.env
+.telegram_chat_id
+.telegram_token
+vps_config.json
+
+# --- Logs & Data ---
+logs/
+*.log
+zalfarkana_trades.csv
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg-info/
+dist/
+build/
+*.egg
+
+# --- Windows GUI Build ---
+*.exe
+*.spec
+*.manifest
+gui_build/
+
+# --- OS ---
+.DS_Store
+Thumbs.db
