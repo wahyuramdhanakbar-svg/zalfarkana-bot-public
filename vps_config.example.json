@@ -15,7 +15,7 @@
   "cooldown_min": 30,
   "cooldown_losses": 3,
   "pos_size_pct": 5,
-  "score_entry": 60,
+  "score_entry": 50,
   "score_override": 92,
   "sl_pct": 5.0,
   "time_stop_h": 3,

@@ -60,7 +60,7 @@ DEFAULTS = {
     "fee_pct": 0.15,                # fee taker per sisi (%)
     "max_open": 8,                  # maksimum posisi terbuka
     "daily_loss_limit_idr": 300_000,# loss harian maksimum (Rp) -> auto stop
-    "score_entry": 60,              # skor minimum entry — dinaikkan Jennifer v2 (analisa 50 trade: banyak SL di skor 60-73)
+    "score_entry": 50,              # skor minimum entry — dinaikkan Jennifer v2 (analisa 50 trade: banyak SL di skor 60-73)
     "score_override": 92,           # skor utk override +1 slot (mode AUTO)
     "max_spread_pct": 0.30,         # filter likuiditas: spread maksimum
     "min_depth_x": 5,               # depth bid top-10 >= N x ukuran posisi
