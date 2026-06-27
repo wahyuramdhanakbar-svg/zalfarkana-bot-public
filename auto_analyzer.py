@@ -48,7 +48,7 @@ if not CHAT_ID:
         with open(CHAT_ID_FILE, encoding="utf-8") as f:
             CHAT_ID = f.read().strip()
     except FileNotFoundError:
-        CHAT_ID = "7216692716"
+        CHAT_ID = "YOUR_CHAT_ID"  # Ganti dengan chat ID Telegram Abang!
 
 # Threshold blacklist otomatis — Jennifer kalibrasi 2026-06-20
 # Data 452 trade: pair buruk konsisten WR<35% + P&L < -30k
