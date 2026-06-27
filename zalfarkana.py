@@ -80,23 +80,8 @@ DEFAULTS = {
 
 STABLE_BASES = {"USDC", "FDUSD", "TUSD", "DAI", "BUSD", "USDP", "EUR", "IDRT", "PAXG"}
 LEVERAGED_HINTS = ("UP", "DOWN", "BULL", "BEAR")
-# Pair yang sering SL — diblacklist sementara (update sesuai performa log)
-BLACKLISTED_PAIRS = {
-    # Auto-generated oleh auto_analyzer.py — 2026-06-22
-    # Pair dengan WR <35% DAN P&L < Rp 30,000 (min 5 trade)
-    "ADAUSDT",
-    "AVAXUSDT",
-    "CRVUSDT",
-    "FETUSDT",
-    "ICPUSDT",
-    "INJUSDT",
-    "NEARUSDT",
-    "ONDOUSDT",
-    "PENGUUSDT",
-    "SUIUSDT",
-    "TRUMPUSDT",
-    "ZECUSDT",
-}
+# Tidak ada blacklist — biar kondisi pasar yang menentukan
+BLACKLISTED_PAIRS = set()
 
 # Jam-jam golden hour (UTC) — WR 51% vs 24% di jam lain (analisa 452 trade)
 # Jennifer patch 2026-06-20:
