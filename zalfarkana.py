@@ -55,19 +55,19 @@ except ImportError:
 DEFAULTS = {
     "modal_idr": 10_000_000,        # modal awal (paper) / acuan sizing
     "usdt_idr": 16_300,             # kurs estimasi utk konversi tampilan
-    "tp_pct": 2.0,                  # take profit % — RR 2:1 (Jennifer: pastikan avg_tp/avg_sl >= 2.0)
-    "sl_pct": 1.0,                  # stop loss %
+    "tp_pct": 1.0,                  # take profit % — RR 2:1 (Jennifer: pastikan avg_tp/avg_sl >= 2.0)
+    "sl_pct": 5.0,                  # stop loss %
     "fee_pct": 0.15,                # fee taker per sisi (%)
     "max_open": 8,                  # maksimum posisi terbuka
     "daily_loss_limit_idr": 300_000,# loss harian maksimum (Rp) -> auto stop
-    "score_entry": 75,              # skor minimum entry — dinaikkan Jennifer v2 (analisa 50 trade: banyak SL di skor 60-73)
+    "score_entry": 60,              # skor minimum entry — dinaikkan Jennifer v2 (analisa 50 trade: banyak SL di skor 60-73)
     "score_override": 92,           # skor utk override +1 slot (mode AUTO)
     "max_spread_pct": 0.30,         # filter likuiditas: spread maksimum
     "min_depth_x": 5,               # depth bid top-10 >= N x ukuran posisi
     "scan_interval": 60,            # detik antar siklus scan
     "pos_size_pct": 30,             # % modal per posisi
     "cooldown_min": 120,            # cooldown re-entry per pair (menit) — 2 jam, max 1x re-entry
-    "top_n_pairs": 50,
+    "top_n_pairs": 100,
     "time_stop_h": 4,               # tutup posisi stagnan setelah N jam
     "max_size_idr": 0,              # cap ukuran posisi (Rp), 0 = tanpa cap
     # #2 adaptasi sizing skor tinggi (high-conviction)

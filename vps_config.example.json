@@ -15,11 +15,11 @@
   "cooldown_min": 30,
   "cooldown_losses": 3,
   "pos_size_pct": 5,
-  "score_entry": 68,
+  "score_entry": 60,
   "score_override": 92,
-  "sl_pct": 0.6,
+  "sl_pct": 5.0,
   "time_stop_h": 3,
-  "top_n_pairs": 50,
-  "tp_pct": 1.5,
+  "top_n_pairs": 100,
+  "tp_pct": 1.0,
   "usdt_idr": 16300
 }
