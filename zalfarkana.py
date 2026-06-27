@@ -212,6 +212,8 @@ class MarketData:
         self.s.headers.update({"User-Agent": "Zalfarkana/1.2"})
         self._cg_cache = {}
         self._cg_time = 0
+        self._cg_ath_cache = {}    # symbol -> {ath, ath_date, ath_pct}
+        self._cg_ath_time = 0
         self._fng = (50, 0)
         self._trending = (set(), 0)
         self._host_idx = 0  # host data pasar yang sedang aktif
@@ -296,11 +298,38 @@ class MarketData:
                     "rank": c.get("market_cap_rank") or 999,
                     "chg24": c.get("price_change_percentage_24h") or 0.0,
                     "fdv_mc": (fdv / mc) if mc else 99,
+                    "id": c.get("id", ""),  # CoinGecko ID buat fetch ATH
                 }
             self._cg_cache, self._cg_time = m, time.time()
         except Exception:
             pass
         return self._cg_cache
+
+    def coingecko_ath(self, base):
+        """ATH coin via CoinGecko. Cache 1 jam. Return {ath, ath_date, ath_pct} atau None."""
+        now = time.time()
+        if base in self._cg_ath_cache and now - self._cg_ath_cache[base].get("_t", 0) < 3600:
+            return self._cg_ath_cache[base]
+        cg = self.coingecko_map().get(base)
+        if not cg or not cg.get("id"):
+            return None
+        try:
+            d = self._get(f"{COINGECKO}/coins/{cg['id']}", {
+                "localization": "false", "tickers": "false",
+                "community_data": "false", "developer_data": "false",
+            }, timeout=10)
+            md = d.get("market_data") or {}
+            ath_usd = md.get("ath", {}).get("usd")
+            ath_date = md.get("ath_date", {}).get("usd")
+            ath_pct = md.get("ath_change_percentage", {}).get("usd")
+            if ath_usd:
+                entry = {"ath": ath_usd, "ath_date": ath_date,
+                         "ath_pct": ath_pct, "_t": now}
+                self._cg_ath_cache[base] = entry
+                return entry
+        except Exception:
+            pass
+        return None
 
     def fear_greed(self):
         if time.time() - self._fng[1] < 1800:
@@ -513,6 +542,25 @@ class SignalEngine:
                 s += 5; reasons.append("24h stabil (bukan pump)")
             elif cg["chg24"] > 15:
                 s -= 8; reasons.append(f"sudah pump {cg['chg24']:+.0f}%/24h")
+
+        # ---- ATH Distance (maks 15) ----
+        ath_data = self.md.coingecko_ath(base)
+        ath_ratio = None
+        if ath_data and ath_data.get("ath"):
+            ath_price = ath_data["ath"]
+            ath_ratio = price / ath_price  # 0.5 = 50% dari ATH
+            snap["ath_ratio"] = round(ath_ratio, 3)
+            if ath_ratio <= 0.10:
+                s += 15; reasons.append(f"ATH discount 90%+ (${ath_price:.1f})")
+                # Bonus: bukan dead coin kalo MC rank oke
+                if cg and cg["rank"] <= 200:
+                    s += 5; reasons.append("ATH bonus: MC top-200 ✓")
+            elif ath_ratio <= 0.30:
+                s += 10; reasons.append(f"ATH -{(1-ath_ratio)*100:.0f}% (${ath_price:.1f})")
+            elif ath_ratio <= 0.50:
+                s += 5; reasons.append(f"ATH -{(1-ath_ratio)*100:.0f}% diskon")
+            elif ath_ratio > 0.70:
+                s -= 5; reasons.append(f"dekat ATH (ratio {ath_ratio:.0%})")
 
         # ---- Sentimen (maks 15) ----
         fng = self.md.fear_greed()
