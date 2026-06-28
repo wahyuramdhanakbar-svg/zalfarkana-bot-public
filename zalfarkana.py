@@ -799,6 +799,7 @@ class ZalfarkanaBot(threading.Thread):
         self.positions[symbol] = Position(symbol, qty, entry, size,
                                           sig["score"], is_override,
                                           snap=sig.get("snap"))
+        self._write_trade(self.positions[symbol], 0, 0, "OPEN", status="OPEN")
         if is_override:
             self.risk.override_in_use = True
         tag = " [OVERRIDE +1]" if is_override else ""
@@ -842,7 +843,7 @@ class ZalfarkanaBot(threading.Thread):
         else:
             # TP atau time-stop: reset re-entry counter
             self.reentry_count.pop(symbol, None)
-        self._write_trade(pos, bid, pl_idr, reason)
+        self._write_trade(pos, bid, pl_idr, reason, status="CLOSE")
         self._emit_trade_event("CLOSE", symbol, pos.entry, bid, bid, pl_idr,
                                (pl_idr / pos.usdt_in * 100) if pos.usdt_in else 0.0,
                                pos.usdt_in)
@@ -896,7 +897,7 @@ class ZalfarkanaBot(threading.Thread):
         except Exception as e:
             self.log(f"Gagal emit trade event: {e}")
 
-    def _write_trade(self, pos, exit_price, pl_idr, reason):
+    def _write_trade(self, pos, exit_price, pl_idr, reason, status="CLOSE"):
         new = not os.path.exists(TRADE_LOG)
         sn = pos.snap or {}
         with open(TRADE_LOG, "a", newline="", encoding="utf-8") as f:
@@ -907,16 +908,30 @@ class ZalfarkanaBot(threading.Thread):
                             "override", "mode",
                             # snapshot indikator saat ENTRY (#6)
                             "rsi", "macd_hist", "bb_pos", "atr_pct",
-                            "ema9_gt_21", "vol_x", "vol_ratio_tp", "fng"])
-            w.writerow([pos.opened.strftime("%Y-%m-%d %H:%M:%S"),
-                        datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                        pos.symbol, f"{pos.entry:.8f}", f"{exit_price:.8f}",
-                        f"{pos.qty:.8f}", f"{pos.usdt_in:.2f}", f"{pl_idr:.0f}",
-                        reason, pos.score, pos.is_override,
-                        "PAPER" if self.paper else "LIVE",
-                        sn.get('rsi'), sn.get('macd_hist'), sn.get('bb_pos'),
-                        sn.get('atr_pct'), sn.get('ema9_gt_21'), sn.get('vol_x'),
-                        sn.get('vol_ratio_tp'), sn.get('fng')])
+                            "ema9_gt_21", "vol_x", "vol_ratio_tp", "fng",
+                            "status"])
+            if status == "OPEN":
+                w.writerow([pos.opened.strftime("%Y-%m-%d %H:%M:%S"),
+                            "",  # waktu_tutup kosong
+                            pos.symbol, f"{pos.entry:.8f}", "0",
+                            f"{pos.qty:.8f}", f"{pos.usdt_in:.2f}", "0",
+                            "OPEN", pos.score, pos.is_override,
+                            "PAPER" if self.paper else "LIVE",
+                            sn.get('rsi'), sn.get('macd_hist'), sn.get('bb_pos'),
+                            sn.get('atr_pct'), sn.get('ema9_gt_21'), sn.get('vol_x'),
+                            sn.get('vol_ratio_tp'), sn.get('fng'),
+                            "OPEN"])
+            else:
+                w.writerow([pos.opened.strftime("%Y-%m-%d %H:%M:%S"),
+                            datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                            pos.symbol, f"{pos.entry:.8f}", f"{exit_price:.8f}",
+                            f"{pos.qty:.8f}", f"{pos.usdt_in:.2f}", f"{pl_idr:.0f}",
+                            reason, pos.score, pos.is_override,
+                            "PAPER" if self.paper else "LIVE",
+                            sn.get('rsi'), sn.get('macd_hist'), sn.get('bb_pos'),
+                            sn.get('atr_pct'), sn.get('ema9_gt_21'), sn.get('vol_x'),
+                            sn.get('vol_ratio_tp'), sn.get('fng'),
+                            "CLOSE"])
 
     def _send_trade_tg(self, pos, exit_price, pl_idr, reason):
         try:
