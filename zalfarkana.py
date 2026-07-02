@@ -36,7 +36,7 @@ import threading
 import time
 import tkinter as tk
 import urllib.parse
-from datetime import datetime, date, timedelta
+from datetime import datetime, date, timedelta, timezone
 from tkinter import ttk, messagebox
 
 try:
@@ -55,12 +55,12 @@ except ImportError:
 DEFAULTS = {
     "modal_idr": 10_000_000,        # modal awal (paper) / acuan sizing
     "usdt_idr": 16_300,             # kurs estimasi utk konversi tampilan
-    "tp_pct": 1.0,                  # take profit % — RR 2:1 (Jennifer: pastikan avg_tp/avg_sl >= 2.0)
-    "sl_pct": 5.0,                  # stop loss %
+    "tp_pct": 2.0,                  # take profit % → RR 2:1 (TP 2% / SL 1%, patch 2026-07-02)
+    "sl_pct": 1.0,                  # stop loss %
     "fee_pct": 0.15,                # fee taker per sisi (%)
     "max_open": 8,                  # maksimum posisi terbuka
     "daily_loss_limit_idr": 300_000,# loss harian maksimum (Rp) -> auto stop
-    "score_entry": 50,              # skor minimum entry — dinaikkan Jennifer v2 (analisa 50 trade: banyak SL di skor 60-73)
+    "score_entry": 50,              # skor minimum entry (patch 2026-07-02: diturunkan dari 60)
     "score_override": 92,           # skor utk override +1 slot (mode AUTO)
     "max_spread_pct": 0.30,         # filter likuiditas: spread maksimum
     "min_depth_x": 5,               # depth bid top-10 >= N x ukuran posisi
@@ -76,6 +76,8 @@ DEFAULTS = {
     "high_conv_pct": 10,            # % ekuitas saat high-conviction
     # #5 kurs otomatis
     "kurs_auto": True,              # ambil kurs USD/IDR jam 06:00 & 18:00
+    # #6 golden hours — default MATI (perlu walk-forward dulu)
+    "golden_hours_enable": False,   # patch 2026-07-02: nonaktif default
 }
 
 STABLE_BASES = {"USDC", "FDUSD", "TUSD", "DAI", "BUSD", "USDP", "EUR", "IDRT", "PAXG"}
@@ -89,7 +91,7 @@ BLACKLISTED_PAIRS = set()
 #   15:00 WIB = 08:00 UTC → WR 42% ✅  |  20:00 WIB = 13:00 UTC → WR 47% ✅
 #   19:00 WIB = 12:00 UTC → WR 71% ✅
 GOLDEN_HOURS_UTC = {1, 2, 8, 12, 13, 16, 17, 21}  # Auto-updated 2026-06-22
-BAD_HOURS_UTC = {3, 4, 5, 6, 4, 14}  # Blacklist: 03-06 UTC + 04 UTC (11 WIB, WR 5%) + 14 UTC (21 WIB, 59 trade WR 24%)
+BAD_HOURS_UTC = {3, 4, 5, 6, 14}  # Blacklist: 03-06 UTC + 14 UTC (21 WIB, 59 trade WR 24%)
 
 # Host data pasar — dicoba berurutan, otomatis pindah jika gagal/terblokir ISP.
 # data-api.binance.vision = mirror resmi khusus data publik (tanpa trading).
@@ -232,6 +234,8 @@ class MarketData:
             base = sym[:-4]
             if base in STABLE_BASES or any(base.endswith(h) for h in LEVERAGED_HINTS):
                 continue
+            if not base.isascii():
+                continue  # tolak simbol non-ASCII (listing gimmick, patch 2026-07-02)
             try:
                 rows.append((sym, base, float(t["quoteVolume"]), float(t["lastPrice"])))
             except (KeyError, ValueError):
@@ -392,22 +396,20 @@ class SignalEngine:
         if symbol in BLACKLISTED_PAIRS:
             return None
 
-        # FILTER 2: Golden Hours — hanya entry di jam terbaik (analisa 442 trade)
-        # Golden hours WR=51% vs non-golden WR=24%
-        # Jam 03-06 UTC selalu skip (blacklisted 2026-06-20)
-        current_hour_utc = datetime.utcnow().hour
+        # FILTER 2: Golden Hours (patch 2026-07-02: toggle default MATI)
+        current_hour_utc = datetime.now(timezone.utc).hour
         if current_hour_utc in BAD_HOURS_UTC:
-            return None
-        if current_hour_utc not in GOLDEN_HOURS_UTC:
-            return None
+            return None  # jam ini selalu buruk, skip
+        if self.cfg.get("golden_hours_enable") and current_hour_utc not in GOLDEN_HOURS_UTC:
+            return None  # hanya entry di golden hours (toggle aktif)
 
         reasons = []
         try:
             closes, vols, highs, lows, opens = self.md.klines(symbol)
         except Exception:
             return None
-        if len(closes) < 60:
-            return None
+        if len(closes) < 120:
+            return None  # AgeFilter: butuh data >= 120 candle (patch 2026-07-02)
         price = closes[-1]
         s = 0
 
@@ -468,16 +470,15 @@ class SignalEngine:
         snap["macd_hist"] = round(hist[-1], 6) if hist else None
         macd_positive = bool(hist and hist[-1] > 0)
 
-        # FILTER 3: RSI<45 + MACD>0 wajib — Jennifer kalibrasi dari analisa 452 trade
-        # RSI<45+MACD>0 = setup paling konsisten
-        # RSI 45-60 = zona ambigu, skip (WR hampir sama antara TP & SL)
-        # Tambahan: RSI<35 = oversold kuat, beri bobot lebih (sudah di atas: +15)
+        # FILTER 3: RSI + MACD — patch 2026-07-02: hard gate → soft score
+        # Zona ambigu RSI 45-60 tetap skip (analisa 452 trade: WR seimbang TP/SL)
+        # MACD dulu hard gate (wajib >0) — sekarang bagian komponen skor
         r_val = r if r is not None else 50
         if r_val is not None and 45 <= r_val <= 60:
             return None  # RSI zona ambigu, skip entry
-        if not (r_val < 50 and macd_positive):
-            return None
-        reasons.append("RSI<45+MACD>0 ✓")
+        # RSI rendah + MACD positif = setup kuat (tapi bukan gerbang wajib)
+        if r_val < 45 and macd_positive:
+            s += 12; reasons.append("RSI rendah + MACD>0 (setup kuat)")
 
         if hist and len(hist) >= 3 and hist[-1] > hist[-2] > hist[-3]:
             s += 10; reasons.append("MACD hist naik")
@@ -616,7 +617,7 @@ class CcxtTokoBroker:
         t = self.ex.fetch_ticker(sym)
         price = float(t.get("ask") or t.get("last"))
         amount = float(self.ex.amount_to_precision(sym, quote_usdt / price))
-        o = self.ex.create_order(sym, "market", "buy", amount, price)
+        o = self.ex.create_order(sym, "market", "buy", amount)  # market order tanpa price (patch 2026-07-02)
         filled = float(o.get("filled") or amount)
         avg = float(o.get("average") or price)
         # konservatif: sisihkan fee dari qty yang dianggap bisa dijual
@@ -650,6 +651,25 @@ class RiskManager:
         self.day = date.today()
         self.realized_pl_idr = 0.0
         self.override_in_use = False
+        # StoplossGuard (patch 2026-07-02)
+        self.sl_times = []            # timestamp SL terakhir
+        self.guard_until = 0          # entry dilarang sampai waktu ini
+
+    def record_sl(self):
+        now = time.time()
+        self.sl_times = [t for t in self.sl_times if now - t < 3600] + [now]
+        if len(self.sl_times) >= 4:            # 4 SL dalam 1 jam
+            self.guard_until = now + 2 * 3600  # halt entry 2 jam
+            return True
+        return False
+
+    def guard_active(self):
+        return time.time() < self.guard_until
+
+    def guard_clear(self):
+        """Nonaktifkan guard (dipanggil saat rezim bullish)."""
+        self.guard_until = 0
+        self.sl_times = []
 
     def _roll_day(self):
         if date.today() != self.day:
@@ -668,6 +688,8 @@ class RiskManager:
         """Return (boleh, pakai_override)."""
         if self.daily_stop_hit():
             return False, False
+        if self.guard_active():
+            return False, False  # StoplossGuard aktif (patch 2026-07-02)
         if open_count < self.cfg["max_open"]:
             return True, False
         if (not self.override_in_use and score >= self.cfg["score_override"]
@@ -697,11 +719,25 @@ class ZalfarkanaBot(threading.Thread):
         self.positions = {}
         self.cooldown = {}
         self.reentry_count = {}  # pair -> jumlah re-entry setelah SL (max 1)
+        self.pair_history = {}   # symbol -> list pl_idr (pair-lock, patch 2026-07-02)
         self.stop_flag = threading.Event()
         self.kill_flag = threading.Event()
         self.manual_buy_q = queue.Queue()
         self.usdt_balance = cfg["modal_idr"] / cfg["usdt_idr"]
         self.total_pl_idr = 0.0   # akumulasi P/L semua trade -> basis COMPOUNDING
+
+        # Sanity guard: tolak start jika risk/reward terbalik (patch 2026-07-02)
+        if cfg["sl_pct"] > cfg["tp_pct"]:
+            raise SystemExit(
+                f"KONFIG BERBAHAYA: SL ({cfg['sl_pct']}%) > TP ({cfg['tp_pct']}%). "
+                f"Satu loss menghapus {cfg['sl_pct']/cfg['tp_pct']:.1f}x profit. "
+                f"Perbaiki dulu di DEFAULTS/GUI.")
+        if cfg["max_open"] * cfg["pos_size_pct"] > 100:
+            raise SystemExit(
+                f"KONFIG TIDAK KONSISTEN: {cfg['max_open']} posisi x "
+                f"{cfg['pos_size_pct']}% = {cfg['max_open']*cfg['pos_size_pct']}% modal. "
+                f"Turunkan max_open atau pos_size_pct (total harus <= 100).")
+
         self.win_count = 0
         self.closed_count = 0
         self.last_signals = []
@@ -843,6 +879,17 @@ class ZalfarkanaBot(threading.Thread):
         pl_idr = self.idr(pl_usdt)
         self.risk.record_pl(pl_idr)
         self.total_pl_idr += pl_idr   # ekuitas ter-update -> trade berikut compounding
+
+        # MaxDrawdownProtection (patch 2026-07-02)
+        eq = self.equity_idr()
+        if not hasattr(self, 'equity_peak'):
+            self.equity_peak = eq
+        self.equity_peak = max(self.equity_peak, eq)
+        dd = (self.equity_peak - eq) / self.equity_peak * 100 if self.equity_peak else 0
+        if dd >= 10:
+            self.log(f"MAX-DRAWDOWN {dd:.1f}% — bot berhenti entry. Evaluasi manual.")
+            self.risk.guard_until = time.time() + 24 * 3600
+
         if pos.is_override:
             self.risk.override_in_use = False
         self.positions.pop(symbol, None)
@@ -850,9 +897,18 @@ class ZalfarkanaBot(threading.Thread):
         # Track re-entry: saat SL, catat 1 re-entry sudah terpakai (max 1x)
         if "SL" in reason or "stop loss" in reason.lower():
             self.reentry_count[symbol] = self.reentry_count.get(symbol, 0) + 1
+            # StoplossGuard: catat SL (patch 2026-07-02)
+            if self.risk.record_sl():
+                self.log("STOPLOSS-GUARD: 4 SL dlm 1 jam — entry dihentikan 2 jam.")
         else:
             # TP atau time-stop: reset re-entry counter
             self.reentry_count.pop(symbol, None)
+        # Pair-lock berdasarkan ekspektasi (patch 2026-07-02)
+        h = self.pair_history.setdefault(symbol, [])
+        h.append(pl_idr); del h[:-3]
+        if len(h) == 3 and sum(h) < 0:
+            self.cooldown[symbol] = time.time() + 24 * 3600  # kunci 24 jam
+            self.log(f"PAIR-LOCK {symbol}: 3 trade terakhir net minus — kunci 24 jam.")
         self._write_trade(pos, bid, pl_idr, reason, status="CLOSE")
         self._emit_trade_event("CLOSE", symbol, pos.entry, bid, bid, pl_idr,
                                (pl_idr / pos.usdt_in * 100) if pos.usdt_in else 0.0,
@@ -874,38 +930,42 @@ class ZalfarkanaBot(threading.Thread):
         self.q.put(("stats", None))
 
     def _emit_trade_event(self, status, symbol, entry, current, exit_price, pnl_idr, pnl_pct, qty_rp):
-        try:
-            pnl_24h = 0.0
-            if os.path.exists(TRADE_LOG):
-                since = datetime.now() - timedelta(hours=24)
-                with open(TRADE_LOG, newline="", encoding="utf-8") as f:
-                    r = csv.reader(f)
-                    for row in r:
-                        if len(row) < 8 or row[0].strip() == "waktu_buka":
-                            continue
-                        try:
-                            dt = datetime.strptime(row[1].strip(), "%Y-%m-%d %H:%M:%S")
-                            if dt >= since:
-                                pnl_24h += float(row[7])
-                        except Exception:
-                            pass
-            side = "BUY" if current >= entry else "SELL"
-            cmd = [sys.executable, TRADE_EVENT_REPORT,
-                   "--symbol", symbol,
-                   "--side", side,
-                   "--entry", str(entry),
-                   "--current", str(current),
-                   "--pnl", str(pnl_idr),
-                   "--pnl-pct", str(pnl_pct),
-                   "--pnl-24h", str(pnl_24h),
-                   "--status", status,
-                   "--qty-rp", str(qty_rp)]
-            if exit_price is not None:
-                cmd += ["--exit-price", str(exit_price)]
-            out = subprocess.check_output(cmd, text=True).strip()
-            self.log(out)
-        except Exception as e:
-            self.log(f"Gagal emit trade event: {e}")
+        if not os.path.exists(TRADE_EVENT_REPORT):
+            return  # script pelapor tidak ada -> lewati diam-diam (patch 2026-07-02)
+        def _run():
+            try:
+                pnl_24h = 0.0
+                if os.path.exists(TRADE_LOG):
+                    since = datetime.now() - timedelta(hours=24)
+                    with open(TRADE_LOG, newline="", encoding="utf-8") as f:
+                        r = csv.reader(f)
+                        for row in r:
+                            if len(row) < 8 or row[0].strip() == "waktu_buka":
+                                continue
+                            try:
+                                dt = datetime.strptime(row[1].strip(), "%Y-%m-%d %H:%M:%S")
+                                if dt >= since:
+                                    pnl_24h += float(row[7])
+                            except Exception:
+                                pass
+                side = "BUY" if current >= entry else "SELL"
+                cmd = [sys.executable, TRADE_EVENT_REPORT,
+                       "--symbol", symbol,
+                       "--side", side,
+                       "--entry", str(entry),
+                       "--current", str(current),
+                       "--pnl", str(pnl_idr),
+                       "--pnl-pct", str(pnl_pct),
+                       "--pnl-24h", str(pnl_24h),
+                       "--status", status,
+                       "--qty-rp", str(qty_rp)]
+                if exit_price is not None:
+                    cmd += ["--exit-price", str(exit_price)]
+                out = subprocess.check_output(cmd, text=True, timeout=15).strip()
+                self.log(out)
+            except Exception:
+                pass  # gagal emit — bot tetap lanjut
+        threading.Thread(target=_run, daemon=True).start()
 
     def _write_trade(self, pos, exit_price, pl_idr, reason, status="CLOSE"):
         new = not os.path.exists(TRADE_LOG)
@@ -984,8 +1044,15 @@ class ZalfarkanaBot(threading.Thread):
                 continue
             chg = (p - pos.entry) / pos.entry * 100
             held_h = (datetime.now() - pos.opened).total_seconds() / 3600
-            if chg >= self.cfg["tp_pct"]:
-                self.close_position(pos, "TP", p)
+            # ROI bertingkat: target profit mengecil seiring umur posisi (patch 2026-07-02)
+            roi_table = [(0, self.cfg["tp_pct"]), (120, 1.0), (180, 0.4)]
+            target = self.cfg["tp_pct"]
+            mins = held_h * 60
+            for m, t in roi_table:
+                if mins >= m:
+                    target = t
+            if chg >= target:
+                self.close_position(pos, f"TP{target:g}", p)
             elif chg <= -self.cfg["sl_pct"]:
                 self.close_position(pos, "SL", p)
             elif held_h >= self.cfg.get("time_stop_h", 4):
@@ -1033,6 +1100,10 @@ class ZalfarkanaBot(threading.Thread):
             if not regime_ok:
                 self.log(f"Rezim pasar NEGATIF ({desc}) — semua entry ditahan.")
                 return
+            # Rezim bullish -> nonaktifkan StoplossGuard (patch 2026-07-02)
+            if self.risk.guard_active():
+                self.risk.guard_clear()
+                self.log("STOPLOSS-GUARD dinonaktifkan — rezim BULLISH terkonfirmasi.")
             opened_this_cycle = 0
             for sig in signals:
                 if sig["score"] < self.cfg["score_entry"]:
