@@ -6,7 +6,7 @@ from datetime import datetime
 
 TOKEN_FILE = "/root/zalfarkana/.telegram_token"
 CHAT_ID_FILE = "/root/zalfarkana/.telegram_chat_id"
-CHAT_ID = os.environ.get("ZALFARKANA_CHAT_ID")
+CHAT_ID = os.environ.get("ZALFARKANA_CHAT_ID", "YOUR_CHAT_ID")
 LOG_PATH = "/root/zalfarkana/logs/vps_activity.log"
 
 with open(TOKEN_FILE, encoding="utf-8") as f:
@@ -17,7 +17,7 @@ if not CHAT_ID:
         with open(CHAT_ID_FILE, encoding="utf-8") as f:
             CHAT_ID = f.read().strip()
     except FileNotFoundError:
-        CHAT_ID = "7216692716"
+        CHAT_ID = "YOUR_CHAT_ID"
 
 TELEGRAM_URL = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
 last_send = 0

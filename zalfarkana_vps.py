@@ -32,6 +32,8 @@ from datetime import datetime
 HERE = os.path.dirname(os.path.abspath(__file__))
 CONFIG_PATH = os.path.join(HERE, "vps_config.json")
 ACTIVITY_LOG = os.path.join(HERE, "logs", "vps_activity.log")
+SIGNAL_FILE = "/tmp/freqtrade_signal.json"
+SIGNAL_POLL_SECS = 10  # polling tiap 10 detik
 os.makedirs(os.path.join(HERE, "logs"), exist_ok=True)
 
 # Impor engine dari file utama (satu sumber kebenaran untuk strategi).
@@ -97,6 +99,119 @@ def build_cfg(conf):
     return cfg
 
 
+# Score default untuk sinyal eksternal dari Freqtrade
+# Lebih tinggi dari score_entry (68), di bawah score_override (92)
+EXTERNAL_SIGNAL_SCORE = 75
+
+
+class SignalListener(threading.Thread):
+    """Polling sinyal dari Freqtrade webhook → eksekusi via ZalfarkanaBot."""
+
+    def __init__(self, bot, stop_event):
+        super().__init__(daemon=True)
+        self.bot = bot
+        self.stop = stop_event
+        self.last_trade_id = 0
+        self.last_mtime = 0
+
+    def run(self):
+        log_line("📡 SignalListener: mulai polling /tmp/freqtrade_signal.json tiap 10 detik")
+        while not self.stop.is_set():
+            try:
+                self._poll()
+            except Exception as e:
+                log_line(f"⚠️ SignalListener error: {e}")
+            self.stop.wait(SIGNAL_POLL_SECS)
+
+    def _poll(self):
+        if not os.path.exists(SIGNAL_FILE):
+            return
+
+        mtime = os.path.getmtime(SIGNAL_FILE)
+        # Skip kalo file gak berubah
+        if mtime <= self.last_mtime and self.last_mtime > 0:
+            return
+
+        with open(SIGNAL_FILE) as f:
+            data = json.load(f)
+
+        trade_id = data.get("trade_id", 0)
+        signal_type = data.get("signal", "")
+
+        # Skip kalo udah diproses atau bukan sinyal buy
+        if trade_id <= self.last_trade_id:
+            self.last_mtime = mtime
+            return
+        if signal_type != "buy":
+            self.last_trade_id = trade_id
+            self.last_mtime = mtime
+            return
+
+        self.last_trade_id = trade_id
+        self.last_mtime = mtime
+
+        pair = data.get("pair", "").replace("/", "")
+        price = data.get("price", 0)
+        fq_strategy = data.get("strategy", "unknown")
+
+        if not pair or not price:
+            log_line(f"⚠️ SignalListener: data tidak lengkap — {data}")
+            return
+
+        log_line(f"📡 Signal terima: {pair} @ {price} | strategi Freqtrade: {fq_strategy}")
+        self._process_signal(pair, float(price), fq_strategy)
+
+    def _process_signal(self, pair, price, fq_strategy="unknown"):
+        bot = self.bot
+
+        # 1. Cek daily stop
+        if bot.risk.daily_stop_hit():
+            log_line(f"⏭️ Signal skip {pair}: daily loss limit tercapai")
+            return
+
+        # 2. Cek apakah pair udah open
+        if pair in bot.positions:
+            log_line(f"⏭️ Signal skip {pair}: posisi sudah terbuka")
+            return
+
+        # 3. Cek cooldown
+        cooldown_until = bot.cooldown.get(pair, 0)
+        if cooldown_until > time.time():
+            sisa = int(cooldown_until - time.time())
+            log_line(f"⏭️ Signal skip {pair}: cooldown {sisa//60}m tersisa")
+            return
+
+        # 4. Cek max open positions
+        open_count = len(bot.positions)
+        max_open = bot.cfg.get("max_open", 3)
+        score_override = bot.cfg.get("score_override", 92)
+
+        can_override = (EXTERNAL_SIGNAL_SCORE >= score_override
+                        and not bot.risk.override_in_use)
+        is_override = False
+
+        if open_count >= max_open:
+            if can_override:
+                is_override = True
+                log_line(f"🔥 Override slot! {pair} — masuk slot +1")
+            else:
+                log_line(f"⏭️ Signal skip {pair}: max open {max_open} tercapai")
+                return
+
+        # 5. Validasi buku order
+        book = bot.md.book(pair)
+        if not book:
+            log_line(f"⏭️ Signal skip {pair}: order book tidak tersedia")
+            return
+
+        # 6. Eksekusi!
+        sig = {"symbol": pair, "score": EXTERNAL_SIGNAL_SCORE, "snap": None}
+        bot.open_position(sig, is_override=is_override)
+        log_line(f"✅ Signal eksekusi: BUY {pair} @ {price} "
+                 f"{'(OVERRIDE)' if is_override else ''} | dari Freqtrade ({fq_strategy})")
+        bot.q.put(("positions", None))
+
+
 class HeadlessRunner:
     def __init__(self, conf):
         self.conf = conf
@@ -112,6 +227,7 @@ class HeadlessRunner:
             api_key=conf.get("api_key", ""), api_secret=conf.get("api_secret", ""),
             cp_key=conf.get("cp_key", ""))
         self.stop = threading.Event()
+        self.listener = SignalListener(self.bot, self.stop)
 
     def consume(self):
         """Kuras antrian UI bot, tulis pesan teks ke file log."""
@@ -150,6 +266,7 @@ class HeadlessRunner:
         log_line("=" * 50)
         consumer = threading.Thread(target=self.consume, daemon=True)
         consumer.start()
+        self.listener.start()
         self.bot.start()
 
     def shutdown(self, *_):

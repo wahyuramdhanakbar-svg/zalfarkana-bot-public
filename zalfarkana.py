@@ -616,7 +616,7 @@ class CcxtTokoBroker:
         t = self.ex.fetch_ticker(sym)
         price = float(t.get("ask") or t.get("last"))
         amount = float(self.ex.amount_to_precision(sym, quote_usdt / price))
-        o = self.ex.create_order(sym, "market", "buy", amount)
+        o = self.ex.create_order(sym, "market", "buy", amount, price)
         filled = float(o.get("filled") or amount)
         avg = float(o.get("average") or price)
         # konservatif: sisihkan fee dari qty yang dianggap bisa dijual
@@ -728,7 +728,17 @@ class ZalfarkanaBot(threading.Thread):
         return usdt * self.cfg["usdt_idr"]
 
     def equity_idr(self):
-        """Ekuitas berjalan = modal awal + akumulasi P/L. Basis compounding."""
+        if not self.paper and self.live_broker:
+            # LIVE: equity = saldo USDT asli Tokocrypto + nilai posisi * kurs
+            try:
+                usdt_free = self.live_broker.usdt_free()
+                total_usdt = usdt_free
+                for pos in list(self.positions.values()):
+                    total_usdt += pos.qty * pos.entry
+                return self.idr(total_usdt)
+            except Exception:
+                pass  # fallback ke modal-based
+        # PAPER atau fallback: modal awal + akumulasi P/L
         return self.cfg["modal_idr"] + self.total_pl_idr
 
     def pos_size_usdt(self, manual_idr=0, score=None):
@@ -945,7 +955,7 @@ class ZalfarkanaBot(threading.Thread):
                 with open(CHAT_FILE, encoding="utf-8") as f:
                     chat_id = f.read().strip()
             except FileNotFoundError:
-                chat_id = os.environ.get("ZALFARKANA_CHAT_ID", "7216692716")
+                chat_id = os.environ.get("ZALFARKANA_CHAT_ID", "YOUR_CHAT_ID")
             sn = pos.snap or {}
             rsi = sn.get('rsi', '?')
             macd_h = sn.get('macd_hist', 0)

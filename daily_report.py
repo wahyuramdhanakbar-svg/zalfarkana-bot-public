@@ -23,7 +23,7 @@ if not CHAT_ID:
         with open(CHAT_ID_FILE, encoding="utf-8") as f:
             CHAT_ID = f.read().strip()
     except FileNotFoundError:
-        CHAT_ID = "7216692716"
+        CHAT_ID = "YOUR_CHAT_ID"
 
 # Timezone WIB = UTC+7
 WIB = timezone(timedelta(hours=7))
