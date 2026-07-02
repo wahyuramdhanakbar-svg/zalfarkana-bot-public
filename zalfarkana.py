@@ -617,7 +617,7 @@ class CcxtTokoBroker:
         t = self.ex.fetch_ticker(sym)
         price = float(t.get("ask") or t.get("last"))
         amount = float(self.ex.amount_to_precision(sym, quote_usdt / price))
-        o = self.ex.create_order(sym, "market", "buy", amount)  # market order tanpa price (patch 2026-07-02)
+        o = self.ex.create_order(sym, "market", "buy", amount, price)  # price wajib untuk Tokocrypto (CCXT kalkulasi cost = amount * price)
         filled = float(o.get("filled") or amount)
         avg = float(o.get("average") or price)
         # konservatif: sisihkan fee dari qty yang dianggap bisa dijual
